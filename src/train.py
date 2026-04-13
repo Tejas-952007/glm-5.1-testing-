@@ -10,7 +10,10 @@ import os
 import sys
 
 # Ensure project root is on the path for `src.*` imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Works for both `python src/train.py` and `python -m src.train`
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import joblib
 import pandas as pd

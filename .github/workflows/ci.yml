@@ -19,7 +19,10 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
@@ -28,7 +31,7 @@ jobs:
         run: python data/generate_data.py
 
       - name: Run training pipeline
-        run: python src/train.py
+        run: python -m src.train
 
       - name: Run tests
         run: pytest tests/ -v
