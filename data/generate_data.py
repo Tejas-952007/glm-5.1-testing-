@@ -5,6 +5,7 @@ Creates a realistic dataset with features correlated to the approval
 outcome, then injects missing values and saves as CSV.
 """
 
+import os
 import numpy as np
 import pandas as pd
 
@@ -59,7 +60,11 @@ for col in ["Employment_Status"]:
     mask = np.random.rand(N) < 0.03
     df.loc[mask, col] = np.nan
 
-df.to_csv("/home/tejas/WORK/credit_card_approval/data/credit_data.csv", index=False)
+# Use a path relative to this script so it works on any machine
+DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_PATH = os.path.join(DATA_DIR, "credit_data.csv")
+
+df.to_csv(OUTPUT_PATH, index=False)
 print(f"Dataset saved: {df.shape[0]} rows x {df.shape[1]} columns")
 print(f"Approval rate: {df['Approved'].mean():.2%}")
 print(f"Missing values per column:\n{df.isnull().sum()}")
