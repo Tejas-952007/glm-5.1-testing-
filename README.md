@@ -1,111 +1,201 @@
-
 # Credit Card Approval Prediction
 
-End-to-end ML project that predicts whether a credit card application will be **Approved** or **Rejected** using Logistic Regression with hyperparameter tuning via GridSearchCV.
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/Tejas-952007/glm-5.1-testing-/actions/workflows/ci.yml/badge.svg)](https://github.com/Tejas-952007/glm-5.1-testing-/actions)
 
-## Project Overview
+End-to-end ML project that predicts whether a credit card application will be **Approved** or **Rejected**, with multi-model comparison, SHAP explanations, MLflow tracking, and a Streamlit dashboard.
 
-| Component | Details |
-|---|---|
-| **Algorithm** | Logistic Regression |
-| **Tuning** | GridSearchCV (C, penalty, solver) |
-| **Metrics** | Accuracy, Precision, Recall, F1, ROC-AUC |
-| **App** | Streamlit web interface |
+---
 
-### Features Used
+## Architecture
 
-- Age
-- Annual Income
-- Credit Score
-- Employment Status (Employed / Self-Employed / Unemployed / Student)
-- Number of Existing Loans
-- Loan Amount
+```mermaid
+flowchart LR
+    A[Raw Data] --> B[Preprocessing]
+    B --> C[Feature Engineering]
+    C --> D[ColumnTransformer]
+    D --> E1[Logistic Regression]
+    D --> E2[Random Forest]
+    D --> E3[XGBoost]
+    D --> E4[LightGBM]
+    E1 --> F[Model Comparison]
+    E2 --> F
+    E3 --> F
+    E4 --> F
+    F --> G[Champion Model]
+    G --> H[Streamlit App]
+    G --> I[SHAP Explanations]
+    F --> J[MLflow Tracking]
+```
+
+---
+
+## Features
+
+| Feature | Details |
+|---------|---------|
+| **Multi-Model Training** | Logistic Regression, Random Forest, XGBoost, LightGBM with GridSearchCV |
+| **Feature Engineering** | Income-to-Loan Ratio, Credit-per-Loan, Age-Credit Interaction, Has Existing Loans |
+| **sklearn Pipeline** | ColumnTransformer prevents data leakage, OneHotEncoder for categoricals |
+| **SHAP Explanations** | Beeswarm summary + per-prediction waterfall plots |
+| **MLflow Tracking** | Full experiment logging — params, metrics, model artifacts |
+| **Streamlit Dashboard** | Single prediction, batch CSV upload, model comparison, SHAP explanations |
+| **Docker** | One-command deployment with `docker compose up` |
+| **CI/CD** | GitHub Actions pipeline with automated testing |
+
+---
 
 ## Project Structure
 
 ```
 credit_card_approval/
 ├── data/
-│   ├── generate_data.py      # Script to generate synthetic dataset
-│   └── credit_data.csv        # Generated dataset
-├── notebooks/
+│   ├── generate_data.py          # Synthetic dataset generator
+│   └── credit_data.csv           # Generated dataset
 ├── src/
-│   ├── __init__.py
-│   ├── preprocessing.py       # Data loading, cleaning, encoding, scaling
-│   ├── model.py               # Logistic Regression + GridSearchCV
-│   ├── train.py               # Training pipeline (entry point)
-│   └── evaluate.py            # Metrics, confusion matrix, ROC
+│   ├── config.py                 # Centralized configuration
+│   ├── logger.py                 # Logging setup
+│   ├── preprocessing.py           # Pipeline: impute, engineer features, ColumnTransformer
+│   ├── model.py                  # Multi-model training with GridSearchCV
+│   ├── evaluate.py               # Metrics, confusion matrix, ROC, PR curves
+│   ├── explain.py                # SHAP summary & waterfall
+│   ├── track.py                  # MLflow experiment tracking
+│   └── train.py                  # End-to-end training pipeline
 ├── app/
-│   └── app.py                 # Streamlit web app
-├── models/                    # Saved model & artifacts (created after training)
-├── plots/                     # Evaluation plots (created after training)
+│   └── app.py                    # Streamlit multi-page dashboard
+├── notebooks/
+│   └── eda.ipynb                 # EDA notebook
+├── tests/
+│   ├── test_preprocessing.py
+│   ├── test_model.py
+│   └── test_evaluate.py
+├── models/                       # Saved model & artifacts (gitignored)
+├── plots/                        # Evaluation plots (gitignored)
+├── .streamlit/config.toml        # Streamlit theme
+├── .github/workflows/ci.yml      # GitHub Actions CI
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
 └── README.md
 ```
 
-## Installation
+---
+
+## Quick Start
+
+### Option 1: Local Setup
 
 ```bash
-# Clone or navigate to the project
+# Clone the repo
+git clone https://github.com/Tejas-952007/glm-5.1-testing-.git
 cd credit_card_approval
 
-# Create a virtual environment (recommended)
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate        # Linux / macOS
+source venv/bin/activate        # Linux/macOS
 # venv\Scripts\activate          # Windows
 
 # Install dependencies
 pip install -r requirements.txt
-```
 
-## How to Run
-
-### 1. Generate the Dataset
-
-```bash
+# Generate dataset & train models
 python data/generate_data.py
+python src/train.py
+
+# Launch the Streamlit app
+streamlit run app/app.py
 ```
 
-### 2. Train the Model
+### Option 2: Docker
 
 ```bash
-cd /path/to/credit_card_approval
+docker compose up
+# Open http://localhost:8501
+```
+
+---
+
+## Usage
+
+### Training Pipeline
+
+```bash
 python src/train.py
 ```
 
 This will:
-- Preprocess the data
-- Run GridSearchCV for hyperparameter tuning
-- Print evaluation metrics
-- Save the trained model to `models/model.pkl`
-- Save preprocessing artifacts to `models/artifacts.pkl`
-- Generate plots in `plots/`
+- Preprocess data (impute, engineer features, ColumnTransformer)
+- Train all 4 models with GridSearchCV
+- Compare models and select the champion by F1 score
+- Generate evaluation plots in `plots/`
+- Save the champion model to `models/model.joblib`
+- Log experiments to MLflow (if installed)
 
-### 3. Launch the Streamlit App
+### MLflow UI
 
 ```bash
-streamlit run app/app.py
+mlflow ui --port 5000
+# Open http://localhost:5000
 ```
 
-Open your browser at `http://localhost:8501`, fill in the applicant details, and click **Predict**.
+### Run Tests
+
+```bash
+pytest tests/ -v
+```
+
+---
+
+## Streamlit App Pages
+
+| Page | Description |
+|------|-------------|
+| **Home** | Project overview, dataset stats, model comparison table |
+| **Single Prediction** | Input form with probability gauge + SHAP waterfall explanation |
+| **Batch Prediction** | Upload CSV, get predictions for all rows, download results |
+| **Model Comparison** | Bar charts comparing F1/Precision/Recall/ROC-AUC across all models |
+
+---
+
+## Model Results
+
+| Model | Accuracy | Precision | Recall | F1 | ROC AUC |
+|-------|----------|-----------|--------|----|---------|
+| *Champion selected by F1 score — see `models/comparison_results.csv`* |
+
+*Run `python src/train.py` to generate latest results.*
+
+---
 
 ## Screenshots
 
 <!-- Add screenshots after running the app -->
-*Coming soon — run the app and take a screenshot!*
 
-## Evaluation
+*Single Prediction with SHAP explanation:*
 
-Typical results on the synthetic dataset:
+![Single Prediction](docs/screenshots/single_prediction.png)
 
-| Metric     | Score  |
-|------------|--------|
-| Accuracy   | ~0.93  |
-| Precision  | ~0.85  |
-| Recall     | ~0.70  |
-| F1 Score   | ~0.77  |
+*Batch Prediction:*
 
-*Actual numbers may vary depending on the random seed and dataset generation.*
+![Batch Prediction](docs/screenshots/batch_prediction.png)
+
+*Model Comparison:*
+
+![Model Comparison](docs/screenshots/model_comparison.png)
+
+---
+
+## Tech Stack
+
+- **Python 3.11**
+- **scikit-learn** — Pipeline, ColumnTransformer, GridSearchCV
+- **XGBoost / LightGBM** — Gradient boosting classifiers
+- **SHAP** — Model interpretability
+- **MLflow** — Experiment tracking
+- **Streamlit** — Interactive dashboard
+- **Docker** — Containerized deployment
+- **GitHub Actions** — Automated CI
 
 ## License
 

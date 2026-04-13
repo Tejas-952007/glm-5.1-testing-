@@ -1,70 +1,106 @@
 """
 Model training module.
 
-Uses Logistic Regression with GridSearchCV for hyperparameter tuning.
+Supports multi-model comparison using GridSearchCV.
+Uses joblib for serialization (scikit-learn recommended).
 """
 
-import pickle
+import joblib
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
 
+from src.config import CLASSIFIERS, CV_FOLDS, SCORING_METRIC
+from src.logger import get_logger
 
-PARAM_GRID = {
-    "C": [0.01, 0.1, 1, 10, 100],
-    "penalty": ["l1", "l2"],
-    "solver": ["liblinear"],
-    "max_iter": [1000],
+logger = get_logger(__name__)
+
+# ── Estimator registry ────────────────────────────────────────────────────
+ESTIMATORS = {
+    "LogisticRegression": LogisticRegression(random_state=42),
+    "RandomForest": RandomForestClassifier(random_state=42),
+    "XGBoost": None,   # imported lazily to avoid hard dependency
+    "LightGBM": None,  # imported lazily to avoid hard dependency
 }
 
 
-def train_model(X_train, y_train, cv: int = 5, scoring: str = "f1"):
-    """Run GridSearchCV over LogisticRegression and return the best estimator.
+def _get_estimator(name: str):
+    """Return an estimator instance, lazily importing optional deps."""
+    if name == "XGBoost":
+        from xgboost import XGBClassifier
+        return XGBClassifier(random_state=42, use_label_encoder=False, eval_metric="logloss", verbosity=0)
+    if name == "LightGBM":
+        from lightgbm import LGBMClassifier
+        return LGBMClassifier(random_state=42, verbose=-1)
+    return ESTIMATORS[name]
+
+
+def train_model(name: str, preprocessor, X_train, y_train):
+    """Train a single model using GridSearchCV wrapped in a Pipeline.
 
     Parameters
     ----------
-    X_train : array-like
-    y_train : array-like
-    cv : int, number of cross-validation folds
-    scoring : str, metric to optimise
+    name : str — key in CLASSIFIERS config
+    preprocessor : fitted ColumnTransformer
+    X_train : DataFrame
+    y_train : Series
 
     Returns
     -------
-    best_model : fitted LogisticRegression
-    grid : fitted GridSearchCV object
+    best_model : fitted Pipeline
+    grid : fitted GridSearchCV
     """
-    print("=" * 50)
-    print("MODEL TRAINING")
-    print("=" * 50)
+    estimator = _get_estimator(name)
+    param_grid = CLASSIFIERS[name]
 
-    lr = LogisticRegression()
+    pipe = Pipeline(steps=[("preprocessor", preprocessor), ("clf", estimator)])
+
+    logger.info("Training %s with GridSearchCV (%d-fold CV, scoring=%s)...",
+                name, CV_FOLDS, SCORING_METRIC)
+
     grid = GridSearchCV(
-        lr,
-        PARAM_GRID,
-        cv=cv,
-        scoring=scoring,
+        pipe,
+        param_grid=param_grid,
+        cv=CV_FOLDS,
+        scoring=SCORING_METRIC,
         n_jobs=-1,
-        verbose=1,
+        verbose=0,
         refit=True,
     )
     grid.fit(X_train, y_train)
 
-    print(f"\nBest parameters: {grid.best_params_}")
-    print(f"Best CV {scoring}: {grid.best_score_:.4f}")
+    logger.info("  Best params: %s", grid.best_params_)
+    logger.info("  Best CV %s: %.4f", SCORING_METRIC, grid.best_score_)
 
-    best_model = grid.best_estimator_
-    return best_model, grid
+    return grid.best_estimator_, grid
+
+
+def train_all_models(preprocessor, X_train, y_train) -> dict:
+    """Train all configured models and return results.
+
+    Returns
+    -------
+    results : dict mapping model name to {"pipeline": Pipeline, "grid": GridSearchCV}
+    """
+    results = {}
+    for name in CLASSIFIERS:
+        try:
+            pipeline, grid = train_model(name, preprocessor, X_train, y_train)
+            results[name] = {"pipeline": pipeline, "grid": grid}
+        except ImportError as e:
+            logger.warning("Skipping %s — dependency not installed: %s", name, e)
+    return results
 
 
 def save_model(model, filepath: str) -> None:
-    """Pickle the trained model to disk."""
-    with open(filepath, "wb") as f:
-        pickle.dump(model, f)
-    print(f"Model saved to {filepath}")
+    """Serialize the trained model (Pipeline) to disk using joblib."""
+    joblib.dump(model, filepath)
+    logger.info("Model saved to %s", filepath)
 
 
 def load_model(filepath: str):
-    """Load a pickled model from disk."""
-    with open(filepath, "rb") as f:
-        model = pickle.load(f)
-    print(f"Model loaded from {filepath}")
+    """Load a serialized model from disk."""
+    model = joblib.load(filepath)
+    logger.info("Model loaded from %s", filepath)
     return model

@@ -1,25 +1,37 @@
 """
 Data preprocessing module.
 
-Handles missing values, encodes categoricals, scales features,
-and performs train-test split.
+Handles missing values, feature engineering, and builds a scikit-learn
+Pipeline (ColumnTransformer + classifier) that bundles encoding and
+scaling — preventing data leakage and simplifying deployment.
 """
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from src.config import (
+    CATEGORICAL_COLS,
+    DATA_PATH,
+    NUMERIC_COLS,
+    RANDOM_STATE,
+    TARGET_COL,
+    TEST_SIZE,
+)
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 
-CATEGORICAL_COLS = ["Employment_Status"]
-NUMERIC_COLS = ["Age", "Income", "Credit_Score", "Existing_Loans", "Loan_Amount"]
-TARGET_COL = "Approved"
-
-
-def load_data(filepath: str) -> pd.DataFrame:
+def load_data(filepath: str = None) -> pd.DataFrame:
     """Load CSV and return a DataFrame."""
+    if filepath is None:
+        filepath = str(DATA_PATH)
     df = pd.read_csv(filepath)
-    print(f"Loaded data: {df.shape[0]} rows x {df.shape[1]} columns")
+    logger.info("Loaded data: %d rows x %d columns", df.shape[0], df.shape[1])
     return df
 
 
@@ -28,91 +40,120 @@ def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     for col in NUMERIC_COLS:
+        if col not in df.columns:
+            continue
         if df[col].isnull().any():
             median_val = df[col].median()
             df[col] = df[col].fillna(median_val)
-            print(f"  Filled {col} missing values with median={median_val:.2f}")
+            logger.info("Filled %s missing values with median=%.2f", col, median_val)
 
     for col in CATEGORICAL_COLS:
         if df[col].isnull().any():
             mode_val = df[col].mode()[0]
             df[col] = df[col].fillna(mode_val)
-            print(f"  Filled {col} missing values with mode={mode_val}")
+            logger.info("Filled %s missing values with mode=%s", col, mode_val)
 
     return df
 
 
-def encode_categoricals(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
-    """Label-encode categorical columns; return transformed df and encoders."""
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Create derived features from raw columns.
+
+    New features:
+    - Income_to_Loan_Ratio: income relative to requested loan
+    - Credit_per_Loan: credit quality per outstanding obligation
+    - Age_Credit_Interaction: combined age-credit signal
+    - Has_Existing_Loans: binary flag for any existing debt
+    """
     df = df.copy()
-    encoders: dict[str, LabelEncoder] = {}
 
-    for col in CATEGORICAL_COLS:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col].astype(str))
-        encoders[col] = le
-        print(f"  Encoded {col}: {dict(zip(le.classes_, le.transform(le.classes_)))}")
+    df["Income_to_Loan_Ratio"] = df["Income"] / (df["Loan_Amount"] + 1)
+    df["Credit_per_Loan"] = df["Credit_Score"] / (df["Existing_Loans"] + 1)
+    df["Age_Credit_Interaction"] = df["Age"] * df["Credit_Score"]
+    df["Has_Existing_Loans"] = (df["Existing_Loans"] > 0).astype(int)
 
-    return df, encoders
+    logger.info("Engineered 4 new features: Income_to_Loan_Ratio, Credit_per_Loan, "
+                "Age_Credit_Interaction, Has_Existing_Loans")
+    return df
 
 
-def scale_features(X_train: pd.DataFrame, X_test: pd.DataFrame
-                   ) -> tuple[pd.DataFrame, pd.DataFrame, StandardScaler]:
-    """Fit StandardScaler on training data and transform both sets."""
-    scaler = StandardScaler()
-    X_train_scaled = pd.DataFrame(
-        scaler.fit_transform(X_train),
-        columns=X_train.columns,
-        index=X_train.index,
+def build_preprocessor() -> ColumnTransformer:
+    """Build the ColumnTransformer for numeric + categorical columns.
+
+    - StandardScaler on numeric columns
+    - OneHotEncoder (drop first) on categorical columns
+    """
+    numeric_transformer = StandardScaler()
+    categorical_transformer = OneHotEncoder(
+        drop="first",
+        sparse_output=False,
+        handle_unknown="ignore",
     )
-    X_test_scaled = pd.DataFrame(
-        scaler.transform(X_test),
-        columns=X_test.columns,
-        index=X_test.index,
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, NUMERIC_COLS),
+            ("cat", categorical_transformer, CATEGORICAL_COLS),
+        ],
+        remainder="drop",
     )
-    return X_train_scaled, X_test_scaled, scaler
+    return preprocessor
 
 
-def preprocess(filepath: str, test_size: float = 0.2, random_state: int = 42):
-    """Full preprocessing pipeline — returns train/test splits + artifacts.
+def get_feature_names(preprocessor: ColumnTransformer) -> list[str]:
+    """Extract output feature names from a fitted ColumnTransformer."""
+    feature_names = []
+    for name, transformer, cols in preprocessor.transformers_:
+        if name == "num":
+            feature_names.extend(cols)
+        elif name == "cat":
+            feature_names.extend(transformer.get_feature_names_out(cols).tolist())
+    return feature_names
+
+
+def preprocess(filepath: str = None):
+    """Full preprocessing pipeline.
 
     Returns
     -------
     X_train, X_test, y_train, y_test : DataFrames / Series
-    scaler : StandardScaler
-    encoders : dict of LabelEncoder
+    preprocessor : fitted ColumnTransformer
     feature_names : list[str]
     """
-    print("=" * 50)
-    print("PREPROCESSING")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("PREPROCESSING STARTED")
+    logger.info("=" * 50)
 
     # 1. Load
     df = load_data(filepath)
 
     # 2. Missing values
-    print("\nHandling missing values...")
+    logger.info("Handling missing values...")
     df = handle_missing_values(df)
 
-    # 3. Encode categoricals
-    print("\nEncoding categorical variables...")
-    df, encoders = encode_categoricals(df)
+    # 3. Feature engineering
+    logger.info("Engineering features...")
+    df = engineer_features(df)
 
     # 4. Split features / target
     X = df.drop(columns=[TARGET_COL])
     y = df[TARGET_COL]
-    feature_names = X.columns.tolist()
 
     # 5. Train-test split
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
-    print(f"\nTrain size: {X_train.shape[0]}, Test size: {X_test.shape[0]}")
-    print(f"Approval rate — train: {y_train.mean():.2%}, test: {y_test.mean():.2%}")
+    logger.info("Train size: %d, Test size: %d", X_train.shape[0], X_test.shape[0])
+    logger.info("Approval rate — train: %.2f%%, test: %.2f%%",
+                y_train.mean() * 100, y_test.mean() * 100)
 
-    # 6. Scale features
-    print("\nScaling features...")
-    X_train, X_test, scaler = scale_features(X_train, X_test)
+    # 6. Build and fit preprocessor (ColumnTransformer)
+    logger.info("Building preprocessor pipeline...")
+    preprocessor = build_preprocessor()
+    preprocessor.fit(X_train)
 
-    print("\nPreprocessing complete.\n")
-    return X_train, X_test, y_train, y_test, scaler, encoders, feature_names
+    feature_names = get_feature_names(preprocessor)
+    logger.info("Output features (%d): %s", len(feature_names), feature_names)
+
+    logger.info("Preprocessing complete.\n")
+    return X_train, X_test, y_train, y_test, preprocessor, feature_names
